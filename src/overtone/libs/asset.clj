@@ -66,7 +66,7 @@
     (try
       (mk-cache-dir! url)
       (download-asset-file url tmp-file)
-      (mv! tmp-file dest-file )
+      (mv! tmp-file dest-file)
       (rm-rf! tmp-dir)
       dest-file
 

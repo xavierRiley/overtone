@@ -3,7 +3,8 @@
       :author "Sam Aaron"}
   overtone.helpers.file
   (:import [java.net URL]
-           [java.io StringWriter])
+           [java.io StringWriter]
+           [org.apache.commons.io FileUtils])
   (:use [overtone.helpers.string]
         [clojure.java.io]
         [overtone.helpers.system :only [windows-os?]])
@@ -317,7 +318,9 @@
         dest   (resolve-tilde-path dest)
         f-src  (file src)
         f-dest (file dest)]
-    (.renameTo f-src f-dest)))
+    (when-not (.renameTo f-src f-dest)
+      (FileUtils/copyFile f-src f-dest)
+      (.delete f-src))))
 
 (defn path-exists?
   "Returns true if file or dir specified by path exists"
