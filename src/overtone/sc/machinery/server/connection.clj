@@ -1,16 +1,16 @@
 (ns overtone.sc.machinery.server.connection
-  (:import [java.io BufferedInputStream]
-           [supercollider ScSynth ScSynthStartedListener MessageReceivedListener])
+  (:import [java.io BufferedInputStream File])
   (:use [clojure.java shell]
         [overtone.config store]
         [overtone.libs event deps]
         [overtone version]
         [overtone.sc defaults]
-        [overtone.sc.machinery.server comms]
+        [overtone.sc.machinery.server comms native args]
         [overtone.osc]
         [overtone.osc.decode :only [osc-decode-packet]]
-        [overtone.helpers.lib :only [print-ascii-art-overtone-logo]]
-        [overtone.helpers.file :only [file-exists? dir-exists? resolve-tilde-path]])
+        [overtone.helpers.lib :only [print-ascii-art-overtone-logo windows-sc-path]]
+        [overtone.helpers.file :only [file-exists? dir-exists? resolve-tilde-path]]
+        [overtone.helpers.system :only [windows-os?]])
   (:require [overtone.config.log :as log]))
 
 (defonce server-thread*       (ref nil))
@@ -104,13 +104,8 @@
   (println "--> Connecting to internal SuperCollider server...")
   (log/debug "Connecting to internal SuperCollider server")
   (let [send-fn (fn [peer-obj buffer]
-                  (.send @sc-world* buffer))
+                  (scsynth-send @sc-world* buffer))
         peer (assoc (osc-peer) :send-fn send-fn)]
-    (.addMessageReceivedListener @sc-world*
-                                 (proxy [MessageReceivedListener] []
-                                   (messageReceived [buf size]
-                                     (event :osc-msg-received
-                                            :msg (osc-decode-packet buf)))))
     (dosync (ref-set server-osc-peer* peer))
     (setup-connect-handlers)
     (server-snd "/status")))
@@ -143,29 +138,36 @@
 (defn connect
   "Connect to an externally running SC audio server.
 
-  (connect 57710)                ;=> connect to an external server on
+  (connect)                      ;=> connect to an external server on
+                                     localhost listening to the default
+                                     port for scsynth 57710
+  (connect 55555)                ;=> connect to an external server on
                                      the localhost listening to port
-                                     57710
+                                     55555
   (connect \"192.168.1.23\" 57110) ;=> connect to an external server with
                                      ip address 192.168.1.23 listening to
                                      port 57110"
+  ([] (connect "127.0.0.1" 57110))
   ([port] (connect "127.0.0.1" port))
   ([host port]
      (.run (Thread. #(external-connection-runner host port)))))
+
+(defn- osc-msg-decoder
+  "Decodes incoming osc message buffers and then sends them as overtone events."
+  [buf]
+  (event :osc-msg-received :msg (osc-decode-packet buf)))
 
 (defn- internal-booter
   "Fn to actually boot internal server. Typically called within a thread."
   []
   (log/info "booting internal audio server")
   (on-deps :internal-server-booted ::connect-internal connect-internal)
-  (let [server (ScSynth.)
-        listener (reify ScSynthStartedListener
-                   (started [this]
-                     (log/info "Boot listener has detected the internal server has booted...")
-                     (satisfy-deps :internal-server-booted)))]
-    (.addScSynthStartedListener server listener)
+  (let [server (scsynth osc-msg-decoder)]
     (dosync (ref-set sc-world* server))
-    (.run server)))
+    (scsynth-listen-udp server 57110)
+    (log/info "The internal scsynth server has booted...")
+    (satisfy-deps :internal-server-booted)
+    (scsynth-run server)))
 
 (defn- boot-internal-server
   "Boots internal server by executing it on a daemon thread."
@@ -191,17 +193,19 @@
 (defn- external-booter
   "Boot thread to start the external audio server process and hook up to
   STDOUT for log messages."
-  [cmd]
-  (log/debug "booting external audio server...")
-  (let [proc       (.exec (Runtime/getRuntime) cmd)
-        in-stream  (BufferedInputStream. (.getInputStream proc))
-        err-stream (BufferedInputStream. (.getErrorStream proc))
-        read-buf   (make-array Byte/TYPE 256)]
-    (while (not (= :disconnected @connection-status*))
-      (sc-log-external in-stream read-buf)
-      (sc-log-external err-stream read-buf)
-      (Thread/sleep 250))
-    (.destroy proc)))
+  ([cmd] (external-booter cmd "."))
+  ([cmd working-dir]
+     (log/debug "booting external audio server...")
+     (let [working-dir (File. working-dir)
+           proc        (.exec (Runtime/getRuntime) cmd nil working-dir)
+           in-stream   (BufferedInputStream. (.getInputStream proc))
+           err-stream  (BufferedInputStream. (.getErrorStream proc))
+           read-buf    (make-array Byte/TYPE 256)]
+       (while (not (= :disconnected @connection-status*))
+         (sc-log-external in-stream read-buf)
+         (sc-log-external err-stream read-buf)
+         (Thread/sleep 250))
+       (.destroy proc))))
 
 (defn- find-sc-path
   "Find the path for SuperCollider. If linux don't check for a file as
@@ -217,25 +221,6 @@
 
     path))
 
-(defn- sc-default-args
-  "Return a map of keyword to default value for each scsynth arg. Reads
-  info from SC-ARG-INFO"
-  []
-  (reduce (fn [res [arg-name {default :default}]]
-            (if default
-              (merge res {arg-name default})
-              res))
-          {}
-          SC-ARG-INFO))
-
-(defn- merge-sc-args
-  [default-opts user-opts]
-  (merge (sc-default-args)
-         (SC-OS-SPECIFIC-ARGS (config-get :os))
-         default-opts
-         (config-get :sc-args {})
-         user-opts))
-
 (defn- sc-arg-flag
   [sc-arg]
   (-> sc-arg SC-ARG-INFO :flag))
@@ -245,14 +230,12 @@
   [args]
   (let [udp?             (:udp? args)
         port             (:port args)
-        user-ugens-paths (or (:user-ugens-path args) [])
-        ugens-paths      (or (:ugens-path args) [])
+        ugens-paths      (or (:ugens-paths args) [])
         args             (select-keys args (keys SC-ARG-INFO))
-        args             (dissoc args :udp? :port :user-ugens-path)
+        args             (dissoc args :udp? :port)
         port-arg         (if (= 1 udp?)
                            ["-u" port]
                            ["-t" port])
-        ugens-paths      (concat user-ugens-paths ugens-paths)
         ugens-paths      (map resolve-tilde-path ugens-paths)
         ugens-paths      (filter dir-exists? ugens-paths)
         ugens-paths      (apply str (interpose ":" ugens-paths))
@@ -271,7 +254,7 @@
   "Creates a sctring array representing the sc command to execute in an
   external process (typically with #'external-booter)"
   [port opts]
-  (into-array String (cons (find-sc-path) (scsynth-arglist (merge-sc-args {:port port} opts)))))
+  (into-array String (cons (or (config-get :sc-path) (find-sc-path)) (scsynth-arglist (merge-sc-args opts {:port port})))))
 
 (defn- boot-external-server
   "Boot the audio server in an external process and tell it to listen on
@@ -280,7 +263,9 @@
      (when-not (= :connected @connection-status*)
        (log/debug "booting external server")
        (let [cmd       (sc-command port opts)
-             sc-thread (Thread. #(external-booter cmd))]
+             sc-thread (if (windows-os?)
+                         (Thread. #(external-booter cmd (windows-sc-path)))
+                         (Thread. #(external-booter cmd)))]
          (.setDaemon sc-thread true)
          (println "--> Booting external SuperCollider server...")
          (log/debug (str "Booting SuperCollider server (scsynth) with cmd: " (apply str (interleave cmd (repeat " ")))))

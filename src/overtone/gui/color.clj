@@ -1,24 +1,25 @@
 (ns overtone.gui.color
   (:use [seesaw core color]))
 
-(defonce theme* (atom
-                 {
-                  :background-fill (color 40 40 40)
-                  :background-stroke (color 30 30 30)
+(def theme* (atom
+              {:background-fill (color 230 230 230)
+               :background-stroke (color 255 255 255)
+               ;:background-fill (color 40 40 40)
+               ;:background-stroke (color 30 30 30)
 
-                  :highlight (color 100 100 255)
+               :highlight (color 100 100 255)
 
-                  :fill-1 (color 0 130 226 150)
-                  :stroke-1 (color 0 140 236)
+               :fill-1 (color 0 130 226 150)
+               :stroke-1 (color 0 140 236)
 
-                  :fill-2 (color 170 170 170 150)
-                  :stroke-2 (color 170 170 170)
+               :fill-2 (color 170 170 170 150)
+               :stroke-2 (color 170 170 170)
 
-                  :fill-3 (color  170 30 30 150)
-                  :stroke-3 (color 170 30 30)
+               :fill-3 (color  170 30 30 150)
+               :stroke-3 (color 170 30 30)
 
-                  :bounding-box (color 250 20 20 150)
-                  }))
+               :bounding-box (color 250 20 20 150)
+               }))
 
 (defn theme-color [tag]
   (get @theme* tag))

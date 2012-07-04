@@ -3,10 +3,12 @@
       :author "Jeff Rose and Sam Aaron"}
   overtone.helpers.lib
   (:import [java.util ArrayList Collections]
-           [java.util.concurrent TimeUnit TimeoutException])
+           [java.util.concurrent TimeUnit TimeoutException]
+           [java.io File])
   (:use [clojure.stacktrace]
         [clojure.pprint]
-        [overtone.helpers doc]))
+        [overtone.helpers doc]
+        [overtone.helpers.system :only [windows-os?]]))
 
 
 (defn to-str
@@ -325,3 +327,16 @@
                (= :overtone.sc.machinery.defcgen/cgen (:type gen))))
     (keyword (:name gen))
         gen))
+
+(defn windows-sc-path
+  "Returns a string representing the path for SuperCollider on Windows,
+   or nil if not on Windows."
+  []
+  (when (windows-os?)
+    (let [p-files-dir (System/getenv "PROGRAMFILES(X86)")
+          p-files-dir (or p-files-dir (System/getenv "PROGRAMFILES"))
+          p-files-dir (File. p-files-dir)
+          p-files     (map str (.listFiles p-files-dir))
+          sc-files    (filter #(.contains % "SuperCollider") p-files)
+          recent-sc   (last (sort (seq sc-files)))]
+      recent-sc)))
