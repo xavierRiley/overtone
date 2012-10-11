@@ -29,8 +29,17 @@
         (continue-scale-from-prev n prev-scale)
         current-scale))))
 
-(defn scale-between [low-note high-note note-to-test]
-  (and (>= note-to-test low-note) (<= note-to-test high-note)))
+(def lownote (note :F2))
+(def highnote (note :A4))
+
+(defn scale-notes-above-tone [scale note]
+  (last (split-with (partial >= (dec note)) scale)))
+
+(defn scale-notes-below-tone [scale note]
+  (first (split-with (partial >= note) scale)))
+
+(defn scale-within-range [scale &{:keys [start end] :or {start lownote end highnote} }]
+  (vec (map find-note-name (scale-notes-below-tone (scale-notes-above-tone scale start) end))))
 
 (definst harpsichord [freq 440]
   (let [duration 1]
@@ -40,9 +49,9 @@
              1 1 (/ 1 freq) (* duration 2) 0.25))))
 
 (->>
-  (scale-from [:F1 :G1 :A1 :Bb1 :C2 :D2 :E2 :F2 :G2 :A2 :Bb2 :C3 :D3 :E3 :F3 :G3 :A3])
-  (scale-from [:F#1 :G#1 :A1 :B1 :C#2 :D2 :E2 :F#2 :G#2 :A2 :B2 :C#3 :D3 :E3 :F#3 :G#3 :A3] :prev-scale)
-  (scale-from [:F1 :G1 :Ab1 :Bb1 :C2 :D2 :Eb2 :F2 :G2 :Ab2 :Bb2 :C3 :D3 :Eb3 :F3 :G3 :Ab3] :prev-scale))
+  (scale-from (scale-within-range (scale-field :F :major)))
+  (scale-from (scale-within-range (scale-field :A :major)) :prev-scale)
+  (scale-from (scale-within-range (scale-field :Eb :major)) :prev-scale))
 
 (defn octave [midi-scale]
   (map (fn [x] (+ 12 x)) midi-scale))
